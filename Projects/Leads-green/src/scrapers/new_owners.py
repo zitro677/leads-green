@@ -122,7 +122,10 @@ class NewOwnersScraper(BaseScraper):
 
         beds = attrs.get("tBEDS", "")
         baths = attrs.get("tBATHS", "")
-        home_info = f"{int(beds)}bd/{int(baths)}ba" if beds and baths else ""
+        try:
+            home_info = f"{int(float(beds))}bd/{int(float(baths))}ba" if beds and baths else ""
+        except (ValueError, TypeError):
+            home_info = ""
 
         signal = (
             f"New homeowner — deed recorded {sale_date_str}"

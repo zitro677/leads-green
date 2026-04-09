@@ -28,8 +28,10 @@ def main(phone_add, phone_check, show_list, reason):
     from src.persistence.client import add_to_dnc, get_supabase, is_on_dnc
 
     if phone_add:
-        add_to_dnc(phone_add, reason=reason)
-        click.echo(f"Added {phone_add} to DNC list (reason: {reason})")
+        from src.pipeline.dedup import normalize_phone
+        normalized = normalize_phone(phone_add) or phone_add
+        add_to_dnc(normalized, reason=reason)
+        click.echo(f"Added {normalized} to DNC list (reason: {reason})")
 
     elif phone_check:
         on_list = is_on_dnc(phone_check)

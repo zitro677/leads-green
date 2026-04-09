@@ -21,9 +21,19 @@ from src.api.routes import health, leads, score, vapi
 
 load_dotenv()
 
+# Validate required env vars at startup — fail loud rather than mid-request
+_REQUIRED_ENV = [
+    "SUPABASE_URL", "SUPABASE_SERVICE_KEY",
+    "VAPI_API_KEY", "VAPI_ASSISTANT_ID", "VAPI_PHONE_NUMBER_ID",
+    "OPENAI_API_KEY",
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    missing = [v for v in _REQUIRED_ENV if not __import__("os").getenv(v)]
+    if missing:
+        raise RuntimeError(f"Missing required env vars: {missing}")
     logger.info("Green Landscape AI Lead Engine starting...")
     yield
     logger.info("Shutting down.")
@@ -36,9 +46,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Allow localhost origins for the dashboard + ngrok for VAPI callbacks.
+# Auth is enforced via X-API-Key header on all write endpoints (see deps.py).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:8002",
+        "http://localhost:8002",
+        "http://localhost",
+        "http://127.0.0.1",
+        "null",  # file:// dashboard origin
+    ],
+    allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -5,12 +5,14 @@ GET  /leads/stats — summary counts by status and period
 GET  /leads/route — ordered field-visit route for no-phone leads
 """
 from __future__ import annotations
+import asyncio
 import math
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel, field_validator
 
+from src.api.deps import require_api_key
 from src.persistence.client import get_leads_by_status, get_supabase
 from src.persistence.models import LeadRaw
 from src.pipeline.enricher import geocode_address as _census_geocode
@@ -68,6 +70,13 @@ router = APIRouter(tags=["leads"])
 class IngestRequest(BaseModel):
     leads: list[LeadRaw]
 
+    @field_validator("leads")
+    @classmethod
+    def limit_batch_size(cls, v):
+        if len(v) > 500:
+            raise ValueError("Max 500 leads per request")
+        return v
+
 
 class IngestResponse(BaseModel):
     total: int
@@ -79,12 +88,12 @@ class IngestResponse(BaseModel):
     errors: int
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest", response_model=IngestResponse, dependencies=[Depends(require_api_key)])
 async def ingest_leads(req: IngestRequest):
     if not req.leads:
         raise HTTPException(status_code=400, detail="No leads provided")
 
-    result: PipelineResult = run_pipeline(req.leads)
+    result: PipelineResult = await asyncio.to_thread(run_pipeline, req.leads)
     return IngestResponse(
         total=result.total,
         inserted=result.inserted,
@@ -156,7 +165,7 @@ async def leads_stats(period: str = Query("7d", description="Period: 24h, 7d, 30
     return {"period": period, "total": total, "queued": queued, "called": called, "booked": booked}
 
 
-@router.post("/leads/{lead_id}/email")
+@router.post("/leads/{lead_id}/email", dependencies=[Depends(require_api_key)])
 async def email_lead(lead_id: str):
     from datetime import datetime, timezone
     from src.outreach.emailer import send_email
@@ -167,14 +176,14 @@ async def email_lead(lead_id: str):
     lead = result.data[0]
     if not lead.get("email"):
         raise HTTPException(status_code=400, detail="Lead has no email address")
-    ok = send_email(lead["email"], lead)
+    ok = await asyncio.to_thread(send_email, lead["email"], lead)
     if not ok:
         raise HTTPException(status_code=500, detail="Email failed — check EMAIL_FROM and EMAIL_APP_PASSWORD in .env")
     sb.table("leads").update({"email_sent_at": datetime.now(timezone.utc).isoformat()}).eq("id", lead_id).execute()
     return {"status": "sent", "to": lead["email"]}
 
 
-@router.post("/leads/{lead_id}/sms")
+@router.post("/leads/{lead_id}/sms", dependencies=[Depends(require_api_key)])
 async def sms_lead(lead_id: str):
     from datetime import datetime, timezone
     from src.outreach.sms import send_intro_sms
@@ -188,14 +197,14 @@ async def sms_lead(lead_id: str):
         raise HTTPException(status_code=400, detail="Lead has no phone number")
     if not is_tcpa_window():
         raise HTTPException(status_code=400, detail="Outside TCPA window (8AM-9PM ET, Mon-Sat)")
-    ok = send_intro_sms(lead)
+    ok = await asyncio.to_thread(send_intro_sms, lead)
     if not ok:
         raise HTTPException(status_code=500, detail="SMS failed — check TWILIO_* keys in .env")
     sb.table("leads").update({"sms_sent_at": datetime.now(timezone.utc).isoformat()}).eq("id", lead_id).execute()
     return {"status": "sent", "to": lead["phone"]}
 
 
-@router.post("/leads/{lead_id}/call")
+@router.post("/leads/{lead_id}/call", dependencies=[Depends(require_api_key)])
 async def call_lead(lead_id: str):
     from src.voicebot.caller import trigger_call, is_tcpa_window
     sb = get_supabase()
@@ -207,30 +216,30 @@ async def call_lead(lead_id: str):
         raise HTTPException(status_code=400, detail="Lead has no phone number")
     if not is_tcpa_window():
         raise HTTPException(status_code=400, detail="Outside TCPA call window (8AM-9PM ET, Mon-Sat)")
-    call = trigger_call(lead)
+    call = await asyncio.to_thread(trigger_call, lead)
     if not call:
         raise HTTPException(status_code=400, detail="Call not triggered — check DNC or retry limit")
     return {"status": "calling", "vapi_call_id": call.get("id")}
 
 
-@router.post("/ingest/facebook")
-async def ingest_facebook():
-    """Trigger the Facebook Groups scraper and run results through the pipeline."""
-    from src.scrapers.facebook_groups import FacebookGroupsScraper
-    scraper = FacebookGroupsScraper(max_posts_per_group=50, days_back=7)
-    raw_leads = scraper.run()
-    if not raw_leads:
-        return {"status": "ok", "message": "No irrigation-intent posts found", "total": 0}
-    result: PipelineResult = run_pipeline(raw_leads)
-    return IngestResponse(
-        total=result.total,
-        inserted=result.inserted,
-        duplicates=result.duplicates,
-        discarded=result.discarded,
-        queued_for_call=result.queued_for_call,
-        queued_for_review=result.queued_for_review,
-        errors=result.errors,
-    )
+@router.post("/ingest/facebook", dependencies=[Depends(require_api_key)])
+async def ingest_facebook(background_tasks: BackgroundTasks):
+    """Trigger the Facebook Groups scraper as a background task (takes 5-10 min)."""
+    background_tasks.add_task(_run_facebook_scraper)
+    return {"status": "started", "message": "Facebook scraper running in background — check Telegram for results"}
+
+
+async def _run_facebook_scraper() -> None:
+    from loguru import logger
+    try:
+        from src.scrapers.facebook_groups import FacebookGroupsScraper
+        scraper = FacebookGroupsScraper(max_posts_per_group=50, days_back=7)
+        raw_leads = await asyncio.to_thread(scraper.run)
+        if raw_leads:
+            await asyncio.to_thread(run_pipeline, raw_leads)
+        logger.info(f"[facebook] Background scrape complete — {len(raw_leads)} leads processed")
+    except Exception as exc:
+        logger.error(f"[facebook] Background scrape failed: {exc}")
 
 
 @router.get("/leads")

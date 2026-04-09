@@ -24,11 +24,16 @@ def get_supabase() -> Client:
 # Leads
 # ---------------------------------------------------------------------------
 
-def insert_lead(lead: dict) -> dict:
-    """Insert a lead; return the inserted row."""
+def insert_lead(lead: dict) -> dict | None:
+    """Insert a lead; return the inserted row, or None on failure."""
     sb = get_supabase()
-    result = sb.table("leads").insert(lead).execute()
-    return result.data[0]
+    try:
+        result = sb.table("leads").insert(lead).execute()
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        from loguru import logger
+        logger.error(f"[db] insert_lead failed: {exc} | source_id={lead.get('source_id')}")
+        raise
 
 
 def get_lead_by_source(source: str, source_id: str) -> dict | None:
@@ -45,10 +50,15 @@ def get_lead_by_source(source: str, source_id: str) -> dict | None:
     return result.data[0] if result.data else None
 
 
-def update_lead(lead_id: str, fields: dict) -> dict:
+def update_lead(lead_id: str, fields: dict) -> dict | None:
     sb = get_supabase()
-    result = sb.table("leads").update(fields).eq("id", lead_id).execute()
-    return result.data[0]
+    try:
+        result = sb.table("leads").update(fields).eq("id", lead_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        from loguru import logger
+        logger.error(f"[db] update_lead failed: {exc} | lead_id={lead_id}")
+        raise
 
 
 def get_leads_by_status(status: str, limit: int = 100) -> list[dict]:

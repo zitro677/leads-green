@@ -5,6 +5,8 @@ Edit the content here — all messaging flows from this file.
 """
 from __future__ import annotations
 
+import html as _html
+
 
 def _first_name(full_name: str) -> str:
     """Extract first name from 'JOHN AND JANE SMITH' or 'John Smith'."""
@@ -25,9 +27,9 @@ def _first_name(full_name: str) -> str:
 EMAIL_SUBJECT = "Free Irrigation Assessment — Welcome to Your New Home"
 
 def email_html(lead: dict) -> str:
-    name = _first_name(lead.get("name") or "Neighbor")
-    address = lead.get("address", "your new property")
-    city = lead.get("city", "Tampa")
+    name = _html.escape(_first_name(lead.get("name") or "Neighbor"))
+    address = _html.escape(lead.get("address") or "your new property")
+    city = _html.escape(lead.get("city") or "Tampa")
     return f"""
 <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#222;">
   <div style="background:#166534;padding:24px 32px;border-radius:8px 8px 0 0;">

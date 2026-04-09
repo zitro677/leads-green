@@ -25,6 +25,8 @@ CREATE TABLE leads (
     vapi_call_id TEXT,
     assigned_to TEXT,
     notes TEXT,
+    email_sent_at TIMESTAMPTZ,
+    sms_sent_at TIMESTAMPTZ,
     raw_json JSONB,
     scraped_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -76,6 +78,8 @@ CREATE INDEX idx_leads_source ON leads(source);
 CREATE INDEX idx_leads_created ON leads(created_at DESC);
 CREATE INDEX idx_leads_zip ON leads(zip_code);
 CREATE INDEX idx_call_outcomes_lead ON call_outcomes(lead_id);
+CREATE INDEX idx_leads_phone ON leads(phone);
+CREATE INDEX idx_leads_vapi_call_id ON leads(vapi_call_id);
 
 -- AUTO-UPDATE updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()

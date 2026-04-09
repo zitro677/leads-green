@@ -74,8 +74,8 @@ def trigger_call(lead: dict) -> dict | None:
         return None
 
     payload = {
-        "assistantId": os.environ["VAPI_ASSISTANT_ID"],
-        "phoneNumberId": os.environ["VAPI_PHONE_NUMBER_ID"],
+        "assistantId": os.getenv("VAPI_ASSISTANT_ID", ""),
+        "phoneNumberId": os.getenv("VAPI_PHONE_NUMBER_ID", ""),
         "customer": {
             "number": phone,
             "name": name,
@@ -94,7 +94,7 @@ def trigger_call(lead: dict) -> dict | None:
     resp = httpx.post(
         VAPI_API_URL,
         headers={
-            "Authorization": f"Bearer {os.environ['VAPI_API_KEY']}",
+            "Authorization": f"Bearer {os.getenv('VAPI_API_KEY', '')}",
             "Content-Type": "application/json",
         },
         json=payload,
@@ -157,6 +157,10 @@ def handle_vapi_outcome(webhook_payload: dict) -> dict:
     )
     lead_row = result.data[0] if result.data else None
     lead_id = lead_row["id"] if lead_row else None
+
+    if not lead_id:
+        logger.warning(f"[caller] No lead found for vapi_call_id={vapi_call_id} — outcome not recorded")
+        return {"lead_id": None, "outcome": outcome, "duration_seconds": duration}
 
     # Insert call outcome
     outcome_row = {
