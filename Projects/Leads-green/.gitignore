@@ -1,0 +1,43 @@
+# Environment — NEVER commit real credentials
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Ruff / linting cache
+.ruff_cache/
+
+# Data files (voter DB, CSVs can be large)
+data/*.db
+data/*.csv
+data/*.tsv
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code session files
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

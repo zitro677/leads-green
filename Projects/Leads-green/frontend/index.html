@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Green Landscape — Lead Pipeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .card-enter { animation: fadeSlide 0.2s ease-out; }
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+    #route-map { height: 480px; width: 100%; border-radius: 12px; z-index: 0; }
+    @media print {
+      .no-print { display: none !important; }
+      body { background: white; }
+      .print-only { display: block !important; }
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans" x-data="app()" x-init="init()">
+
+  <!-- Header -->
+  <header class="bg-green-700 text-white shadow-md no-print">
+    <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+        </svg>
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Green Landscape Irrigation</h1>
+          <p class="text-green-200 text-xs">AI Lead Pipeline — Tampa, FL</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="text-right text-sm">
+          <div class="font-semibold" x-text="stats.total + ' leads'"></div>
+          <div class="text-green-200 text-xs" x-text="stats.queued + ' queued for Jimmy'"></div>
+        </div>
+        <button @click="refreshPipeline()" :disabled="loading"
+          class="bg-green-800 hover:bg-green-600 disabled:opacity-50 rounded-lg px-3 py-2 text-sm flex items-center gap-2 transition">
+          <svg class="w-4 h-4" :class="loading ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh
+        </button>
+        <div class="text-xs text-green-300" x-text="lastUpdated"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stats bar -->
+  <div class="bg-white border-b border-gray-200 shadow-sm no-print">
+    <div class="max-w-screen-2xl mx-auto px-6 py-3 flex gap-6 overflow-x-auto">
+      <template x-for="s in statCards" :key="s.label">
+        <div class="flex items-center gap-3 min-w-fit">
+          <div :class="s.bg" class="w-9 h-9 rounded-lg flex items-center justify-center text-lg">
+            <span x-text="s.icon"></span>
+          </div>
+          <div>
+            <div class="text-xl font-bold text-gray-800" x-text="s.value"></div>
+            <div class="text-xs text-gray-500" x-text="s.label"></div>
+          </div>
+          <div class="h-8 w-px bg-gray-200 ml-3"></div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="bg-white border-b border-gray-200 no-print">
+    <div class="max-w-screen-2xl mx-auto px-6">
+      <div class="flex gap-0">
+        <button @click="activeTab = 'pipeline'"
+          :class="activeTab === 'pipeline' ? 'border-green-600 text-green-700 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
+          class="px-5 py-3 border-b-2 text-sm transition flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 012-2h2a2 2 0 012 2v10a2 2 0 01-2 2h-2a2 2 0 01-2-2" />
+          </svg>
+          Pipeline Board
+        </button>
+        <button @click="activeTab = 'route'; loadRoute()"
+          :class="activeTab === 'route' ? 'border-green-600 text-green-700 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'"
+          class="px-5 py-3 border-b-2 text-sm transition flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+          Field Route
+          <span x-show="route.stops.length > 0" class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full" x-text="route.stops.length + ' stops'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PIPELINE BOARD ===== -->
+  <main x-show="activeTab === 'pipeline'" class="max-w-screen-2xl mx-auto px-4 py-6 no-print">
+    <div class="flex gap-4 overflow-x-auto pb-4 items-start">
+      <template x-for="col in columns" :key="col.status">
+        <div class="flex-shrink-0 w-72">
+          <div :class="col.headerBg" class="rounded-t-xl px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-lg" x-text="col.icon"></span>
+              <span class="font-semibold text-sm" :class="col.textColor" x-text="col.label"></span>
+            </div>
+            <span :class="col.badgeBg + ' ' + col.badgeText"
+              class="text-xs font-bold px-2 py-0.5 rounded-full"
+              x-text="(leads[col.status] || []).length"></span>
+          </div>
+          <div class="bg-gray-100 rounded-b-xl min-h-32 p-2 flex flex-col gap-2 max-h-[72vh] overflow-y-auto scrollbar-thin">
+            <template x-if="(leads[col.status] || []).length === 0">
+              <div class="text-center text-gray-400 text-xs py-6">No leads here</div>
+            </template>
+            <template x-for="lead in (leads[col.status] || [])" :key="lead.id">
+              <div class="card-enter bg-white rounded-lg shadow-sm border border-gray-200 p-3 cursor-pointer hover:shadow-md hover:border-green-400 transition"
+                @click="openLead(lead)">
+                <div class="flex items-start justify-between mb-2">
+                  <span :class="scoreBadge(lead.score)" class="text-xs font-bold px-2 py-0.5 rounded-full" x-text="lead.score + ' pts'"></span>
+                  <span class="text-xs text-gray-400 capitalize" x-text="lead.source?.replace('_',' ')"></span>
+                </div>
+                <div class="font-semibold text-gray-800 text-sm leading-tight truncate" x-text="lead.name || 'Unknown Owner'"></div>
+                <div class="text-xs text-gray-500 truncate mt-0.5" x-text="lead.address"></div>
+                <div class="flex items-center gap-1 mt-2">
+                  <template x-if="lead.phone">
+                    <div class="flex items-center gap-1 text-xs text-green-600">
+                      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z"/></svg>
+                      <span x-text="lead.phone"></span>
+                    </div>
+                  </template>
+                  <template x-if="!lead.phone">
+                    <span class="text-xs text-orange-400 font-medium">No phone — card drop</span>
+                  </template>
+                </div>
+                <div class="mt-2">
+                  <span :class="signalBadge(lead.signal_type)" class="text-xs px-2 py-0.5 rounded-full" x-text="lead.signal_type?.replace('_',' ')"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </main>
+
+  <!-- ===== FIELD ROUTE TAB ===== -->
+  <div x-show="activeTab === 'route'" class="max-w-screen-2xl mx-auto px-4 py-6">
+
+    <!-- Controls bar -->
+    <div class="no-print bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-5 flex flex-wrap gap-4 items-end">
+      <div class="flex-1 min-w-64">
+        <label class="block text-xs font-semibold text-gray-500 mb-1">Starting Address</label>
+        <input x-model="routeStart"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          placeholder="11510 Spring Hill Dr, Spring Hill FL 34609" />
+      </div>
+      <button @click="loadRoute()" :disabled="routeLoading"
+        class="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition">
+        <svg class="w-4 h-4" :class="routeLoading ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+        </svg>
+        <span x-text="routeLoading ? 'Building route...' : 'Build Route'"></span>
+      </button>
+      <button x-show="route.stops.length > 0" @click="printRoute()"
+        class="no-print border border-gray-300 hover:bg-gray-50 text-gray-600 font-semibold px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+        </svg>
+        Print Route
+      </button>
+      <div x-show="route.stops.length > 0" class="text-sm text-gray-600">
+        <span class="font-bold text-green-700" x-text="route.total_stops"></span> stops &nbsp;|&nbsp;
+        <span class="font-bold" x-text="totalMiles + ' mi total'"></span>
+      </div>
+    </div>
+
+    <!-- Print header (only visible when printing) -->
+    <div class="hidden print-only mb-6">
+      <h1 class="text-2xl font-bold text-green-800">Green Landscape Irrigation</h1>
+      <p class="text-gray-600">Field Route — Business Card Distribution</p>
+      <p class="text-sm text-gray-500 mt-1">Start: <span x-text="route.start_address"></span> &nbsp;|&nbsp; <span x-text="route.total_stops + ' stops, ' + totalMiles + ' mi'"></span></p>
+      <hr class="mt-3" />
+    </div>
+
+    <template x-if="route.stops.length === 0 && !routeLoading">
+      <div class="text-center py-20 text-gray-400">
+        <svg class="w-16 h-16 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+        </svg>
+        <p class="text-lg font-medium">No route loaded</p>
+        <p class="text-sm mt-1">Enter your starting address and click Build Route</p>
+      </div>
+    </template>
+
+    <template x-if="route.stops.length > 0">
+      <div class="grid grid-cols-1 xl:grid-cols-5 gap-5">
+
+        <!-- Map -->
+        <div class="xl:col-span-3 no-print">
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h2 class="font-semibold text-gray-800 text-sm">Route Map</h2>
+              <span class="text-xs text-gray-400">OpenStreetMap — no API key needed</span>
+            </div>
+            <div id="route-map"></div>
+          </div>
+        </div>
+
+        <!-- Stop list -->
+        <div class="xl:col-span-2">
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-100 no-print">
+              <h2 class="font-semibold text-gray-800 text-sm">Stop List</h2>
+              <p class="text-xs text-gray-400 mt-0.5">Leave a business card at each door</p>
+            </div>
+            <div class="divide-y divide-gray-100 max-h-[480px] overflow-y-auto scrollbar-thin print:max-h-none">
+              <!-- Start point -->
+              <div class="px-4 py-3 bg-green-50 flex items-start gap-3">
+                <div class="w-7 h-7 rounded-full bg-green-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">S</div>
+                <div>
+                  <div class="font-semibold text-green-800 text-sm">START</div>
+                  <div class="text-xs text-green-600" x-text="route.start_address"></div>
+                </div>
+              </div>
+              <!-- Stops -->
+              <template x-for="stop in route.stops" :key="stop.id">
+                <div class="px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition cursor-pointer"
+                  @click="flyToStop(stop)" @mouseenter="highlightStop(stop.id)" @mouseleave="unhighlightStop(stop.id)">
+                  <div :class="stopColor(stop.stop_number)"
+                    class="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5"
+                    x-text="stop.stop_number"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-semibold text-gray-800 text-sm truncate" x-text="stop.name || 'Unknown Owner'"></div>
+                    <div class="text-xs text-gray-500 truncate" x-text="stop.address"></div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <span class="text-xs text-blue-500 font-medium" x-text="stop.distance_miles + ' mi from prev'"></span>
+                      <span class="text-gray-300">·</span>
+                      <span :class="signalBadge(stop.signal_type)" class="text-xs px-1.5 py-0.5 rounded-full" x-text="stop.signal_type?.replace('_',' ')"></span>
+                    </div>
+                  </div>
+                  <div class="text-right flex-shrink-0">
+                    <div :class="scoreBadge(stop.score)" class="text-xs font-bold px-2 py-0.5 rounded-full" x-text="stop.score + ' pts'"></div>
+                  </div>
+                </div>
+              </template>
+              <!-- End / Return -->
+              <div class="px-4 py-3 bg-gray-50 flex items-start gap-3">
+                <div class="w-7 h-7 rounded-full bg-gray-400 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">E</div>
+                <div>
+                  <div class="font-semibold text-gray-600 text-sm">END</div>
+                  <div class="text-xs text-gray-400">Return to base</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </template>
+  </div>
+
+  <!-- Lead detail modal -->
+  <div x-cloak x-show="selected" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 no-print"
+    @click.self="selected = null">
+    <div x-show="selected" x-transition class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+      <div class="bg-green-700 text-white px-6 py-4 flex items-center justify-between">
+        <div>
+          <div class="font-bold text-lg" x-text="selected?.name || 'Unknown Owner'"></div>
+          <div class="text-green-200 text-sm" x-text="selected?.address"></div>
+        </div>
+        <button @click="selected = null" class="text-green-200 hover:text-white transition">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div class="flex gap-3">
+          <div class="flex-1 bg-gray-50 rounded-xl p-3 text-center">
+            <div class="text-3xl font-black" :class="selected?.score >= 55 ? 'text-green-600' : 'text-yellow-500'" x-text="selected?.score"></div>
+            <div class="text-xs text-gray-500 mt-1">Score</div>
+          </div>
+          <div class="flex-1 bg-gray-50 rounded-xl p-3 text-center">
+            <div class="text-sm font-bold capitalize text-gray-700" x-text="selected?.status"></div>
+            <div class="text-xs text-gray-500 mt-1">Status</div>
+          </div>
+          <div class="flex-1 bg-gray-50 rounded-xl p-3 text-center">
+            <div class="text-sm font-bold text-gray-700 capitalize" x-text="selected?.source?.replace('_',' ')"></div>
+            <div class="text-xs text-gray-500 mt-1">Source</div>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 text-sm">
+            <svg class="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z"/></svg>
+            <span x-text="selected?.phone || 'No phone — deliver card in person'"></span>
+          </div>
+        </div>
+        <div class="bg-blue-50 border border-blue-100 rounded-xl p-3">
+          <div class="text-xs font-semibold text-blue-500 uppercase mb-1">Signal</div>
+          <div class="text-sm text-blue-800" x-text="selected?.signal"></div>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-3">
+          <div class="text-xs font-semibold text-gray-400 uppercase mb-1">Score Reasoning</div>
+          <div class="text-sm text-gray-600" x-text="selected?.score_reason"></div>
+        </div>
+        <div class="flex gap-3 pt-2">
+          <!-- Action buttons -->
+          <div class="grid grid-cols-2 gap-2">
+            <template x-if="selected?.phone">
+              <button @click="smsLead(selected)" :disabled="actionLoading"
+                class="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-1.5 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                <span x-text="selected?.sms_sent_at ? 'SMS Sent' : 'Send SMS'"></span>
+              </button>
+            </template>
+            <template x-if="selected?.email">
+              <button @click="emailLead(selected)" :disabled="actionLoading"
+                class="bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-1.5 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                <span x-text="selected?.email_sent_at ? 'Email Sent' : 'Send Email'"></span>
+              </button>
+            </template>
+            <template x-if="selected?.status === 'queued' && selected?.phone">
+              <button @click="callLead(selected)" :disabled="actionLoading"
+                class="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-1.5 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                <span x-text="actionLoading ? 'Calling...' : 'Call (Jimmy)'"></span>
+              </button>
+            </template>
+            <button @click="selected = null" class="border border-gray-300 hover:bg-gray-50 text-gray-600 font-semibold py-2.5 rounded-xl text-sm transition">Close</button>
+          </div>
+        </div>
+        <div x-show="actionResult" x-transition
+          :class="actionResult?.ok ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'"
+          class="border rounded-xl p-3 text-sm" x-text="actionResult?.msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = 'http://127.0.0.1:8002'
+    const COLUMNS = [
+      { status: 'new',       label: 'Review',    icon: '🔍', headerBg: 'bg-yellow-50', textColor: 'text-yellow-800', badgeBg: 'bg-yellow-200', badgeText: 'text-yellow-800' },
+      { status: 'queued',    label: 'Queued',    icon: '📋', headerBg: 'bg-blue-50',   textColor: 'text-blue-800',   badgeBg: 'bg-blue-200',   badgeText: 'text-blue-800' },
+      { status: 'calling',   label: 'Calling',   icon: '📞', headerBg: 'bg-purple-50', textColor: 'text-purple-800', badgeBg: 'bg-purple-200', badgeText: 'text-purple-800' },
+      { status: 'qualified', label: 'Qualified', icon: '✅', headerBg: 'bg-green-50',  textColor: 'text-green-800',  badgeBg: 'bg-green-200',  badgeText: 'text-green-800' },
+      { status: 'booked',    label: 'Booked',    icon: '🗓️', headerBg: 'bg-emerald-50',textColor: 'text-emerald-800',badgeBg: 'bg-emerald-200',badgeText: 'text-emerald-800' },
+      { status: 'lost',      label: 'Lost',      icon: '❌', headerBg: 'bg-red-50',    textColor: 'text-red-800',    badgeBg: 'bg-red-200',    badgeText: 'text-red-800' },
+    ]
+
+    let leafletMap = null
+    let routeMarkers = {}
+
+    function app() {
+      return {
+        activeTab: 'pipeline',
+        leads: {},
+        stats: { total: 0, queued: 0, called: 0, booked: 0 },
+        loading: false,
+        selected: null,
+        actionLoading: false,
+        actionResult: null,
+        lastUpdated: '',
+        columns: COLUMNS,
+        routeStart: '11510 Spring Hill Dr, Spring Hill FL 34609',
+        routeLoading: false,
+        route: { stops: [], total_stops: 0, start_address: '', start_lat: null, start_lon: null },
+
+        get statCards() {
+          return [
+            { label: 'Total Leads',      value: this.stats.total,  icon: '📥', bg: 'bg-gray-100' },
+            { label: 'Queued for Jimmy', value: this.stats.queued, icon: '📋', bg: 'bg-blue-100' },
+            { label: 'Calls Made',       value: this.stats.called, icon: '📞', bg: 'bg-purple-100' },
+            { label: 'Booked',           value: this.stats.booked, icon: '🗓️', bg: 'bg-emerald-100' },
+          ]
+        },
+
+        get totalMiles() {
+          return this.route.stops.reduce((s, stop) => s + (stop.distance_miles || 0), 0).toFixed(1)
+        },
+
+        async init() {
+          await this.refreshPipeline()
+          setInterval(() => { if (this.activeTab === 'pipeline') this.refreshPipeline() }, 30000)
+        },
+
+        async refreshPipeline() {
+          if (this.loading) return
+          this.loading = true
+          try {
+            const statuses = ['new', 'queued', 'calling', 'qualified', 'booked', 'lost']
+            const results = await Promise.all(
+              statuses.map(s => fetch(`${API}/leads?status=${s}&limit=200`).then(r => r.json()).then(d => ({ status: s, leads: d.leads || [] })))
+            )
+            const map = {}
+            let total = 0
+            results.forEach(r => { map[r.status] = r.leads; total += r.leads.length })
+            this.leads = map
+            this.stats.total = total
+            this.stats.queued = (map.queued || []).length
+            this.stats.called = ['calling','qualified','booked','lost'].reduce((s, st) => s + (map[st] || []).length, 0)
+            this.stats.booked = (map.booked || []).length
+            this.lastUpdated = new Date().toLocaleTimeString()
+          } catch(e) { console.error(e) }
+          finally { this.loading = false }
+        },
+
+        async loadRoute() {
+          this.routeLoading = true
+          try {
+            const url = `${API}/leads/route?start=${encodeURIComponent(this.routeStart)}&limit=80`
+            const resp = await fetch(url)
+            if (!resp.ok) {
+              const err = await resp.json()
+              alert('Route error: ' + (err.detail || 'Unknown error'))
+              return
+            }
+            this.route = await resp.json()
+            this.$nextTick(() => this.renderMap())
+          } catch(e) {
+            alert('Could not reach API at ' + API)
+          } finally {
+            this.routeLoading = false
+          }
+        },
+
+        renderMap() {
+          const stops = this.route.stops
+          if (!stops.length) return
+
+          // Init or reset map
+          if (leafletMap) { leafletMap.remove(); leafletMap = null }
+          routeMarkers = {}
+          leafletMap = L.map('route-map')
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+          }).addTo(leafletMap)
+
+          const bounds = []
+
+          // Start marker (green star)
+          const startIcon = L.divIcon({
+            html: `<div style="background:#16a34a;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">S</div>`,
+            iconSize: [32, 32], iconAnchor: [16, 16], className: ''
+          })
+          L.marker([this.route.start_lat, this.route.start_lon], { icon: startIcon })
+            .addTo(leafletMap)
+            .bindPopup(`<b>START</b><br>${this.route.start_address}`)
+          bounds.push([this.route.start_lat, this.route.start_lon])
+
+          // Stop markers
+          const linePoints = [[this.route.start_lat, this.route.start_lon]]
+          stops.forEach((stop, idx) => {
+            if (!stop.lat || !stop.lon) return
+            const color = idx < 10 ? '#2563eb' : idx < 30 ? '#7c3aed' : '#d97706'
+            const icon = L.divIcon({
+              html: `<div style="background:${color};color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:11px;border:2px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.3)">${stop.stop_number}</div>`,
+              iconSize: [28, 28], iconAnchor: [14, 14], className: ''
+            })
+            const marker = L.marker([stop.lat, stop.lon], { icon })
+              .addTo(leafletMap)
+              .bindPopup(`<b>#${stop.stop_number} — ${stop.name || 'Unknown'}</b><br>${stop.address}<br><small>${stop.distance_miles} mi from prev</small>`)
+            routeMarkers[stop.id] = marker
+            bounds.push([stop.lat, stop.lon])
+            linePoints.push([stop.lat, stop.lon])
+          })
+
+          // Route polyline
+          L.polyline(linePoints, { color: '#16a34a', weight: 2.5, opacity: 0.7, dashArray: '6,6' }).addTo(leafletMap)
+
+          leafletMap.fitBounds(bounds, { padding: [30, 30] })
+        },
+
+        flyToStop(stop) {
+          if (!leafletMap || !stop.lat || !stop.lon) return
+          leafletMap.flyTo([stop.lat, stop.lon], 16, { duration: 0.8 })
+          routeMarkers[stop.id]?.openPopup()
+        },
+
+        highlightStop(id) {
+          routeMarkers[id]?.setZIndexOffset(1000)
+        },
+        unhighlightStop(id) {
+          routeMarkers[id]?.setZIndexOffset(0)
+        },
+
+        printRoute() { window.print() },
+
+        openLead(lead) { this.selected = lead; this.actionResult = null },
+
+        async _doAction(lead, endpoint, successMsg) {
+          this.actionLoading = true; this.actionResult = null
+          try {
+            const resp = await fetch(`${API}/leads/${lead.id}/${endpoint}`, { method: 'POST' })
+            const data = await resp.json()
+            if (resp.ok) {
+              this.actionResult = { ok: true, msg: successMsg }
+              setTimeout(() => this.refreshPipeline(), 1500)
+            } else {
+              this.actionResult = { ok: false, msg: data.detail || `${endpoint} failed` }
+            }
+          } catch(e) {
+            this.actionResult = { ok: false, msg: 'API unreachable — is the server running?' }
+          } finally { this.actionLoading = false }
+        },
+
+        callLead(lead)  { this._doAction(lead, 'call',  'Jimmy is calling ' + (lead.name || 'the lead') + '!') },
+        smsLead(lead)   { this._doAction(lead, 'sms',   'SMS sent to ' + lead.phone + '!') },
+        emailLead(lead) { this._doAction(lead, 'email', 'Email sent to ' + lead.email + '!') },
+
+        stopColor(n) {
+          if (n <= 10) return 'bg-blue-500'
+          if (n <= 30) return 'bg-violet-500'
+          return 'bg-amber-500'
+        },
+
+        scoreBadge(score) {
+          if (score >= 70) return 'bg-green-100 text-green-700'
+          if (score >= 55) return 'bg-blue-100 text-blue-700'
+          if (score >= 20) return 'bg-yellow-100 text-yellow-700'
+          return 'bg-gray-100 text-gray-500'
+        },
+
+        signalBadge(type) {
+          const map = { new_owner: 'bg-purple-100 text-purple-700', new_construction: 'bg-blue-100 text-blue-700', complaint: 'bg-red-100 text-red-700', request: 'bg-green-100 text-green-700' }
+          return map[type] || 'bg-gray-100 text-gray-500'
+        }
+      }
+    }
+  </script>
+</body>
+</html>
