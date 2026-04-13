@@ -1,13 +1,13 @@
 # Pre-Deployment Design — Green Landscape AI Lead Engine
 **Date:** 2026-04-13  
-**Status:** Approved  
+**Status:** Approved (updated for Docker + Traefik)  
 **Author:** Claude Code + Luis Ortiz (Arkana Tech)
 
 ---
 
 ## Goal
 
-Prepare the Green Landscape AI Lead Engine for production deployment on a VPS with domain `arkanatech.net`. Covers code fixes, test validation, documentation, and GitHub push. VPS provisioning is a separate subsequent step.
+Prepare the Green Landscape AI Lead Engine for production deployment on a VPS (`arkanatech.net`, IP `2.135.148.139.172`). Covers code fixes, test validation, documentation, and GitHub push. VPS provisioning follows immediately after.
 
 ---
 
@@ -17,16 +17,31 @@ Fix code issues first → run full test suite to confirm green → write documen
 
 ---
 
+## VPS Architecture (existing)
+
+| Component | Details |
+|---|---|
+| OS | Ubuntu |
+| RAM | 22.91 GiB |
+| Reverse proxy | **Traefik** (Docker container) — handles all routing + SSL via Let's Encrypt |
+| All services | Docker containers |
+| Running services | n8n, Flowise (×2), Supabase (×2 instances), PostgreSQL, Redis, Qdrant |
+| Domain | `arkanatech.net` |
+
+**Deployment pattern:** every service is a Docker container with Traefik labels that define its hostname and SSL. No standalone Nginx or manual Certbot needed — Traefik handles ACME automatically.
+
+---
+
 ## Section 1 — Code Fixes
 
 Six bugs identified during pre-deployment audit:
 
 | # | File | Issue | Fix |
 |---|---|---|---|
-| 1 | `src/api/main.py` | Hardcoded ngrok + localhost CORS origins | Replace with `ALLOWED_ORIGINS` env var |
-| 2 | `tools/scripts/test_api.py` | Hardcoded port 8000, missing API key on auth'd routes | Update default to 8001, add `X-API-Key` header |
+| 1 | `src/api/main.py` | Hardcoded ngrok + localhost CORS origins | Replace with `ALLOWED_ORIGINS` env var (comma-separated) |
+| 2 | `tools/scripts/test_api.py` | Hardcoded port 8000, missing API key on auth'd routes | Update default to 8001, add `X-API-Key` header to all requests |
 | 3 | `src/api/main.py` | `INTERNAL_API_KEY` missing from startup validation | Add to `_REQUIRED_ENV` list |
-| 4 | `frontend/index.html` | `API = 'http://127.0.0.1:8001'` hardcoded | Make configurable via `window.API_BASE` with fallback |
+| 4 | `frontend/index.html` | `API = 'http://127.0.0.1:8001'` hardcoded | Read from `window.API_BASE` injected by Nginx, fallback to `http://127.0.0.1:8001` |
 | 5 | `schema.sql` | Missing columns from migrations 003 + 004 | Add `next_call_at`, `appointment_at`, `appointment_notes` |
 | 6 | Git | New files (auth, admin, migrations, scripts) untracked | Stage and commit all |
 
@@ -61,7 +76,7 @@ All 12 tests must pass before documentation is written.
 docs/
 ├── architecture.md          # Updated: auth, retry logic, appointments, DB schema
 ├── api.md                   # All endpoints with curl examples
-├── deployment.md            # VPS: Nginx + systemd + Certbot + env vars
+├── deployment.md            # VPS: Docker + Traefik + env vars + docker-compose
 ├── runbooks/
 │   └── operations.md        # Restart, logs, trigger scrapers, monitor
 └── decisions/
@@ -70,14 +85,18 @@ docs/
     └── 003-n8n-orchestration.md
 ```
 
-`README.md` updated with correct quick-start (port 8001, conda env).  
-`schema.sql` updated as canonical DB definition including all migrations.
+`README.md` — updated with correct quick-start (port 8001, conda env, Docker commands).  
+`schema.sql` — updated as canonical DB definition including all migrations.
 
-### Target subdomains (for deployment docs)
-- Dashboard: `https://leads.arkanatech.net` — Nginx static file
-- API: `https://api.arkanatech.net` — Nginx → uvicorn (systemd)
-- SSL: Certbot (already installed on VPS)
-- Process manager: systemd
+### Target subdomains
+- Dashboard: `https://leads.arkanatech.net` — Nginx container (static), routed by Traefik
+- API: `https://api.arkanatech.net` — uvicorn container, routed by Traefik
+- SSL: Traefik ACME (Let's Encrypt, automatic)
+
+### Docker assets to create
+- `Dockerfile` — multi-stage Python build for FastAPI app
+- `Dockerfile.dashboard` — Nginx serving `frontend/` with `API_BASE` injection
+- `docker-compose.prod.yml` — production stack with Traefik labels
 
 ---
 
@@ -87,9 +106,10 @@ Single commit: `"Pre-deployment: fixes, tests, docs"` pushed to `master`.
 
 **Included:**
 - All 6 code fixes
-- Updated + passing test suite
+- Updated + passing test suite (12/12)
 - Full docs structure
 - Updated schema.sql, README.md
+- Dockerfile, Dockerfile.dashboard, docker-compose.prod.yml
 
 **Excluded (gitignored):**
 - `.env`, `.venv/`, `*.log`, `data/`
@@ -98,9 +118,10 @@ Single commit: `"Pre-deployment: fixes, tests, docs"` pushed to `master`.
 
 ## Success Criteria
 
-- [ ] All 12 API tests pass against live server
-- [ ] `ALLOWED_ORIGINS` drives CORS (no hardcoded URLs)
-- [ ] Dashboard works when served from any origin
+- [ ] All 12 API tests pass against live server on port 8001
+- [ ] `ALLOWED_ORIGINS` env var drives CORS (no hardcoded URLs)
+- [ ] Dashboard `API_BASE` injected at runtime (works from any origin)
 - [ ] `docs/` folder complete and accurate
+- [ ] Docker images build cleanly (`docker build` passes)
 - [ ] Clean git commit pushed to GitHub
-- [ ] Ready to receive VPS specs and begin server provisioning
+- [ ] Ready for `docker-compose up` on VPS
