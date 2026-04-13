@@ -10,6 +10,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -18,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.api.routes import health, leads, score, vapi
+from src.api.routes import auth as auth_routes
+from src.api.routes import admin as admin_routes
 
 load_dotenv()
 
@@ -26,6 +29,8 @@ _REQUIRED_ENV = [
     "SUPABASE_URL", "SUPABASE_SERVICE_KEY",
     "VAPI_API_KEY", "VAPI_ASSISTANT_ID", "VAPI_PHONE_NUMBER_ID",
     "OPENAI_API_KEY",
+    "JWT_SECRET_KEY",
+    "INTERNAL_API_KEY",
 ]
 
 
@@ -46,23 +51,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Allow localhost origins for the dashboard + ngrok for VAPI callbacks.
-# Auth is enforced via X-API-Key header on all write endpoints (see deps.py).
+# Read ALLOWED_ORIGINS from env — comma-separated list
+# Example: "https://leads.arkanatech.net,https://api.arkanatech.net,null"
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost,http://127.0.0.1,http://localhost:8001,http://127.0.0.1:8001,null"
+)
+_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8002",
-        "http://localhost:8002",
-        "http://localhost",
-        "http://127.0.0.1",
-        "null",  # file:// dashboard origin
-    ],
+    allow_origins=_origins,
     allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(health.router)
+app.include_router(auth_routes.router)
+app.include_router(admin_routes.router)
 app.include_router(leads.router)
 app.include_router(score.router)
 app.include_router(vapi.router)
