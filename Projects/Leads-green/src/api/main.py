@@ -58,6 +58,8 @@ _raw_origins = os.getenv(
     "http://localhost,http://127.0.0.1,http://localhost:8001,http://127.0.0.1:8001,null"
 )
 _origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+if not _origins:
+    logger.warning("ALLOWED_ORIGINS is empty — all CORS requests will be rejected")
 
 app.add_middleware(
     CORSMiddleware,
