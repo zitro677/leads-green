@@ -22,6 +22,9 @@ CREATE TABLE leads (
     score_reason TEXT,
     status TEXT DEFAULT 'new',      -- "new" | "queued" | "calling" | "qualified" | "booked" | "lost" | "exhausted"
     retry_count INTEGER DEFAULT 0,
+    next_call_at TIMESTAMPTZ,           -- earliest retry timestamp (null = call immediately)
+    appointment_at TIMESTAMPTZ,         -- booked appointment date/time
+    appointment_notes TEXT,             -- summary/notes from VAPI call for the appointment
     vapi_call_id TEXT,
     assigned_to TEXT,
     notes TEXT,
@@ -80,6 +83,8 @@ CREATE INDEX idx_leads_zip ON leads(zip_code);
 CREATE INDEX idx_call_outcomes_lead ON call_outcomes(lead_id);
 CREATE INDEX idx_leads_phone ON leads(phone);
 CREATE INDEX idx_leads_vapi_call_id ON leads(vapi_call_id);
+CREATE INDEX idx_leads_next_call_at ON leads(next_call_at)
+    WHERE status = 'queued' AND next_call_at IS NOT NULL;
 
 -- AUTO-UPDATE updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
