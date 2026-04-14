@@ -1,0 +1,70 @@
+# Production stack — Docker + Traefik
+# Deploy: docker compose -f docker-compose.prod.yml up -d
+# Update API: docker compose -f docker-compose.prod.yml build leads-api && docker compose -f docker-compose.prod.yml up -d --no-deps leads-api
+
+services:
+
+  leads-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: leads-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=info
+    labels:
+      - "traefik.enable=true"
+      # HTTPS router
+      - "traefik.http.routers.leads-api.rule=Host(`api.arkanatech.net`)"
+      - "traefik.http.routers.leads-api.entrypoints=websecure"
+      - "traefik.http.routers.leads-api.tls.certresolver=letsencrypt"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.leads-api-http.rule=Host(`api.arkanatech.net`)"
+      - "traefik.http.routers.leads-api-http.entrypoints=web"
+      - "traefik.http.routers.leads-api-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      # Service port
+      - "traefik.http.services.leads-api.loadbalancer.server.port=8001"
+    networks:
+      - traefik_proxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  leads-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: leads-dashboard
+    restart: unless-stopped
+    environment:
+      - API_BASE=https://api.arkanatech.net
+    labels:
+      - "traefik.enable=true"
+      # HTTPS router
+      - "traefik.http.routers.leads-dashboard.rule=Host(`leads.arkanatech.net`)"
+      - "traefik.http.routers.leads-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.leads-dashboard.tls.certresolver=letsencrypt"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.leads-dashboard-http.rule=Host(`leads.arkanatech.net`)"
+      - "traefik.http.routers.leads-dashboard-http.entrypoints=web"
+      - "traefik.http.routers.leads-dashboard-http.middlewares=redirect-to-https"
+      # Service port
+      - "traefik.http.services.leads-dashboard.loadbalancer.server.port=80"
+    networks:
+      - traefik_proxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  traefik_proxy:
+    external: true
+    name: traefik_proxy   # ← CHANGE THIS to match your actual Traefik network name
