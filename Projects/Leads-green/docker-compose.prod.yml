@@ -16,19 +16,12 @@ services:
       - LOG_LEVEL=info
     labels:
       - "traefik.enable=true"
-      # HTTPS router
       - "traefik.http.routers.leads-api.rule=Host(`api.arkanatech.net`)"
       - "traefik.http.routers.leads-api.entrypoints=websecure"
-      - "traefik.http.routers.leads-api.tls.certresolver=letsencrypt"
-      # HTTP → HTTPS redirect
-      - "traefik.http.routers.leads-api-http.rule=Host(`api.arkanatech.net`)"
-      - "traefik.http.routers.leads-api-http.entrypoints=web"
-      - "traefik.http.routers.leads-api-http.middlewares=redirect-to-https"
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
-      # Service port
+      - "traefik.http.routers.leads-api.tls.certresolver=leresolver"
       - "traefik.http.services.leads-api.loadbalancer.server.port=8001"
     networks:
-      - traefik_proxy
+      - traefik_default
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -46,18 +39,12 @@ services:
       - API_BASE=https://api.arkanatech.net
     labels:
       - "traefik.enable=true"
-      # HTTPS router
       - "traefik.http.routers.leads-dashboard.rule=Host(`leads.arkanatech.net`)"
       - "traefik.http.routers.leads-dashboard.entrypoints=websecure"
-      - "traefik.http.routers.leads-dashboard.tls.certresolver=letsencrypt"
-      # HTTP → HTTPS redirect
-      - "traefik.http.routers.leads-dashboard-http.rule=Host(`leads.arkanatech.net`)"
-      - "traefik.http.routers.leads-dashboard-http.entrypoints=web"
-      - "traefik.http.routers.leads-dashboard-http.middlewares=redirect-to-https"
-      # Service port
+      - "traefik.http.routers.leads-dashboard.tls.certresolver=leresolver"
       - "traefik.http.services.leads-dashboard.loadbalancer.server.port=80"
     networks:
-      - traefik_proxy
+      - traefik_default
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/healthz"]
       interval: 30s
@@ -65,6 +52,5 @@ services:
       retries: 3
 
 networks:
-  traefik_proxy:
+  traefik_default:
     external: true
-    name: traefik_proxy   # ← CHANGE THIS to match your actual Traefik network name
