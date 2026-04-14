@@ -12,7 +12,7 @@ TCPA compliance:
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytz
@@ -26,7 +26,8 @@ ET = pytz.timezone("America/New_York")
 
 CALL_WINDOW_START = 8   # 8 AM ET
 CALL_WINDOW_END = 21    # 9 PM ET
-MAX_ATTEMPTS = int(os.getenv("MAX_CALL_ATTEMPTS", "3"))
+MAX_ATTEMPTS = int(os.getenv("MAX_CALL_ATTEMPTS", "2"))
+RETRY_HOURS = int(os.getenv("CALL_RETRY_HOURS", "24"))
 
 
 def is_tcpa_window() -> bool:
@@ -49,7 +50,7 @@ def trigger_call(lead: dict) -> dict | None:
     """
     lead_id = str(lead.get("id", ""))
     phone = lead.get("phone")
-    name = lead.get("name") or "there"
+    name = (lead.get("name") or "there")[:40]
 
     if not phone:
         logger.warning(f"[caller] Lead {lead_id} has no phone — skipping")
@@ -69,9 +70,17 @@ def trigger_call(lead: dict) -> dict | None:
     # Max attempts check
     retry_count = lead.get("retry_count", 0)
     if retry_count >= MAX_ATTEMPTS:
-        logger.info(f"[caller] Lead {lead_id} exhausted {MAX_ATTEMPTS} attempts")
+        logger.info(f"[caller] Lead {lead_id} exhausted {MAX_ATTEMPTS} attempts — marking discarded")
         update_lead(lead_id, {"status": "exhausted"})
         return None
+
+    # Retry window check — don't call before next_call_at
+    next_call_at = lead.get("next_call_at")
+    if next_call_at:
+        next_call_dt = datetime.fromisoformat(next_call_at.replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) < next_call_dt:
+            logger.info(f"[caller] Lead {lead_id} not ready for retry until {next_call_at}")
+            return None
 
     payload = {
         "assistantId": os.getenv("VAPI_ASSISTANT_ID", ""),
@@ -100,7 +109,9 @@ def trigger_call(lead: dict) -> dict | None:
         json=payload,
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.is_success:
+        logger.error(f"[caller] VAPI error {resp.status_code}: {resp.text}")
+        raise ValueError(f"VAPI call failed ({resp.status_code}): {resp.text}")
     call_data = resp.json()
 
     vapi_call_id = call_data.get("id")
@@ -174,18 +185,45 @@ def handle_vapi_outcome(webhook_payload: dict) -> dict:
     if lead_id:
         insert_call_outcome(outcome_row)
 
-    # Update lead status
-    status_map = {
-        "booked": "booked",
-        "not_interested": "lost",
-        "no_answer": "queued",  # will retry
-        "voicemail": "queued",
-        "qualified": "qualified",
-    }
-    new_status = status_map.get(outcome, "queued")
+    # Update lead status — schedule retry or exhaust if no answer/voicemail
     if lead_id:
         from src.persistence.client import update_lead
-        update_lead(lead_id, {"status": new_status})
+        lead_row_full = (
+            sb.table("leads").select("retry_count").eq("id", lead_id).limit(1).execute()
+        )
+        current_retry = (lead_row_full.data[0].get("retry_count", 0) if lead_row_full.data else 0)
+
+        if outcome in ("no_answer", "voicemail"):
+            if current_retry >= MAX_ATTEMPTS:
+                update_lead(lead_id, {"status": "exhausted"})
+                logger.info(f"[caller] Lead {lead_id} exhausted after {current_retry} attempts")
+            else:
+                next_call_at = (datetime.now(timezone.utc) + timedelta(hours=RETRY_HOURS)).isoformat()
+                update_lead(lead_id, {"status": "queued", "next_call_at": next_call_at})
+                logger.info(f"[caller] Lead {lead_id} queued for retry at {next_call_at}")
+        else:
+            status_map = {
+                "booked": "booked",
+                "not_interested": "lost",
+                "qualified": "qualified",
+            }
+            new_status = status_map.get(outcome, "queued")
+            extra = {}
+            if outcome == "booked":
+                # Store appointment info — Calendly sends exact time in assistantOverrides;
+                # fall back to +2 business days if not present.
+                appt_time = (
+                    webhook_payload.get("call", {})
+                    .get("assistantOverrides", {})
+                    .get("variableValues", {})
+                    .get("appointment_at")
+                )
+                if not appt_time:
+                    from datetime import timedelta as _td
+                    appt_time = (datetime.now(timezone.utc) + _td(days=2)).isoformat()
+                extra["appointment_at"] = appt_time
+                extra["appointment_notes"] = summary or "Appointment booked via Jimmy"
+            update_lead(lead_id, {"status": new_status, **extra})
 
     # DNC if not interested
     if outcome == "not_interested" and phone:

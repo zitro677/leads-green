@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 
@@ -124,6 +124,52 @@ def _process_lead(raw: LeadRaw, result: PipelineResult) -> None:
             f"[pipeline] Review lead — {raw.source}/{raw.source_id} "
             f"score={scoring.score}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Retry queued calls
+# ---------------------------------------------------------------------------
+
+def retry_queued_calls() -> int:
+    """
+    Fire VAPI calls for all queued leads whose next_call_at has passed.
+    Returns number of calls triggered.
+
+    Called by the scheduler every hour (or on demand via POST /leads/retry-queued).
+    """
+    from src.persistence.client import get_supabase
+    from src.voicebot.caller import trigger_call, is_tcpa_window
+
+    if not is_tcpa_window():
+        logger.info("[retry] Outside TCPA window — skipping retry run")
+        return 0
+
+    sb = get_supabase()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Leads ready for retry: queued + next_call_at in the past (or null = immediate)
+    result = (
+        sb.table("leads")
+        .select("*")
+        .eq("status", "queued")
+        .not_.is_("phone", "null")
+        .or_(f"next_call_at.is.null,next_call_at.lte.{now_iso}")
+        .limit(50)
+        .execute()
+    )
+
+    triggered = 0
+    for lead in result.data or []:
+        try:
+            call = trigger_call(lead)
+            if call:
+                triggered += 1
+                logger.info(f"[retry] Call triggered for lead {lead['id']} — VAPI {call.get('id')}")
+        except Exception as exc:
+            logger.error(f"[retry] Failed to call lead {lead['id']}: {exc}")
+
+    logger.info(f"[retry] Retry run complete — {triggered} calls triggered")
+    return triggered
 
 
 # ---------------------------------------------------------------------------

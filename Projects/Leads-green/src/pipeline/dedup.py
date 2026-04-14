@@ -38,29 +38,40 @@ def is_duplicate(lead: LeadRaw) -> bool:
     Check order:
     1. Exact match on source + source_id (fast — indexed)
     2. Phone number match across all sources (if phone present)
+    3. Exhausted leads are permanently blocked regardless of source
     """
     # Check 1: exact source+id match
     if lead.source_id:
         existing = get_lead_by_source(lead.source, lead.source_id)
         if existing:
-            logger.debug(
-                f"[dedup] Duplicate by source_id: {lead.source}/{lead.source_id}"
-            )
+            status = existing.get("status", "")
+            if status == "exhausted":
+                logger.debug(
+                    f"[dedup] Exhausted lead blocked: {lead.source}/{lead.source_id}"
+                )
+            else:
+                logger.debug(
+                    f"[dedup] Duplicate by source_id: {lead.source}/{lead.source_id}"
+                )
             return True
 
-    # Check 2: phone match
+    # Check 2: phone match (also catches exhausted leads from other sources)
     phone = normalize_phone(lead.phone)
     if phone:
         sb = get_supabase()
         result = (
             sb.table("leads")
-            .select("id")
+            .select("id,status")
             .eq("phone", phone)
             .limit(1)
             .execute()
         )
         if result.data:
-            logger.debug(f"[dedup] Duplicate by phone: {phone}")
+            status = result.data[0].get("status", "")
+            if status == "exhausted":
+                logger.debug(f"[dedup] Exhausted phone blocked: {phone}")
+            else:
+                logger.debug(f"[dedup] Duplicate by phone: {phone}")
             return True
 
     return False

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
-from src.api.deps import require_api_key
+from src.api.deps import require_api_key, require_auth
 from src.persistence.client import get_leads_by_status, get_supabase
 from src.persistence.models import LeadRaw
 from src.pipeline.enricher import geocode_address as _census_geocode
@@ -105,7 +105,7 @@ async def ingest_leads(req: IngestRequest):
     )
 
 
-@router.get("/leads/route")
+@router.get("/leads/route", dependencies=[Depends(require_auth)])
 async def field_route(
     start: str = Query("11510 Spring Hill Dr, Spring Hill FL 34609", description="Starting address"),
     limit: int = Query(80, ge=1, le=300),
@@ -148,7 +148,7 @@ async def field_route(
     }
 
 
-@router.get("/leads/stats")
+@router.get("/leads/stats", dependencies=[Depends(require_auth)])
 async def leads_stats(period: str = Query("7d", description="Period: 24h, 7d, 30d")):
     periods = {"24h": 1, "7d": 7, "30d": 30}
     days = periods.get(period, 7)
@@ -216,10 +216,51 @@ async def call_lead(lead_id: str):
         raise HTTPException(status_code=400, detail="Lead has no phone number")
     if not is_tcpa_window():
         raise HTTPException(status_code=400, detail="Outside TCPA call window (8AM-9PM ET, Mon-Sat)")
-    call = await asyncio.to_thread(trigger_call, lead)
+    try:
+        call = await asyncio.to_thread(trigger_call, lead)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     if not call:
         raise HTTPException(status_code=400, detail="Call not triggered — check DNC or retry limit")
     return {"status": "calling", "vapi_call_id": call.get("id")}
+
+
+@router.post("/scrape/{source}", dependencies=[Depends(require_api_key)])
+async def trigger_scraper(source: str, background_tasks: BackgroundTasks):
+    """
+    Trigger a named scraper from n8n or external caller.
+    Runs in background — returns immediately.
+    Sources: permits, new_owners, facebook_groups
+    """
+    allowed = {"permits", "new_owners", "facebook_groups"}
+    if source not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unknown source. Choose: {allowed}")
+    background_tasks.add_task(_run_scraper, source)
+    return {"status": "started", "source": source, "message": f"{source} scraper running in background"}
+
+
+async def _run_scraper(source: str) -> None:
+    from loguru import logger
+    try:
+        if source == "permits":
+            from src.scrapers.permits import HillsboroughPermitsScraper
+            scraper = HillsboroughPermitsScraper(days_back=7)
+        elif source == "new_owners":
+            from src.scrapers.new_owners import NewOwnersScraper
+            scraper = NewOwnersScraper(days_back=7)
+        elif source == "facebook_groups":
+            from src.scrapers.facebook_groups import FacebookGroupsScraper
+            scraper = FacebookGroupsScraper(max_posts_per_group=50, days_back=7)
+        else:
+            return
+        raw_leads = await asyncio.to_thread(scraper.run)
+        if raw_leads:
+            result = await asyncio.to_thread(run_pipeline, raw_leads)
+            logger.info(f"[scrape/{source}] Done — {result.inserted} inserted, {result.queued_for_call} queued")
+        else:
+            logger.info(f"[scrape/{source}] No new leads found")
+    except Exception as exc:
+        logger.error(f"[scrape/{source}] Failed: {exc}")
 
 
 @router.post("/ingest/facebook", dependencies=[Depends(require_api_key)])
@@ -242,7 +283,15 @@ async def _run_facebook_scraper() -> None:
         logger.error(f"[facebook] Background scrape failed: {exc}")
 
 
-@router.get("/leads")
+@router.post("/leads/retry-queued", dependencies=[Depends(require_api_key)])
+async def retry_queued(background_tasks: BackgroundTasks):
+    """Trigger retry calls for all queued leads whose next_call_at has passed."""
+    from src.pipeline.runner import retry_queued_calls
+    background_tasks.add_task(retry_queued_calls)
+    return {"status": "started", "message": "Retry run launched in background"}
+
+
+@router.get("/leads", dependencies=[Depends(require_auth)])
 async def list_leads(
     status: str = Query("new", description="Filter by status"),
     limit: int = Query(50, ge=1, le=500),
