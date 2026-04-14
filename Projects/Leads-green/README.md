@@ -1,103 +1,79 @@
-# 🌿 Green Landscape Irrigation — AI Lead Engine
+# Green Landscape Irrigation — AI Lead Engine
 
-> **Arkana Tech** · Built for Green Landscape Irrigation, Tampa FL  
-> Replaces Angie's List with a proprietary, AI-powered lead generation and qualification pipeline
-
----
-
-## Why This Exists
-
-Green Landscape Irrigation pays ~**$1,000/month** for Angie's List leads that are:
-- **Shared** with 5–10 competitors
-- **Not focused** on irrigation specifically  
-- **Slow to convert** — no automation on the follow-up side
-
-This system delivers **exclusive, intent-qualified leads** through automated scraping of public sources, enrichment, AI scoring, and an outbound **voicebot (Jimmy)** that calls, qualifies, and books estimates — all before a human is involved.
+> **Built by Arkana Tech** for Green Landscape Irrigation, Tampa FL  
+> Replaces $1,000/mo Angie's List with exclusive, AI-qualified leads + automated voicebot
 
 ---
 
-## System Overview
+## What It Does
 
-```
-[Lead Sources] → [Scraper Engine] → [Pipeline/Scorer] → [Supabase CRM]
-                                                              ↓
-                                                    [VAPI Voicebot]
-                                                              ↓
-                                                   [Estimate Booked]
-                                                              ↓
-                                                [Telegram Notification]
-```
+- **Scrapes** public sources (building permits, Zillow, Facebook HOA groups) for irrigation-intent leads
+- **Scores** each lead 0–100 using signal-based rules
+- **Calls** high-score leads automatically via VAPI voicebot "Jimmy"
+- **Books** estimate appointments and notifies the owner via Telegram
+- **Dashboard** at `leads.arkanatech.net` shows the full pipeline in real time
 
 ---
 
-## Quick Start
+## Quick Start (Local Development)
 
 ```bash
-# 1. Clone and setup
-git clone <repo>
+# 1. Clone
+git clone https://github.com/zitro677/green-landscape-ai.git
 cd green-landscape-ai
-cp .env.example .env  # fill API keys
 
-# 2. Install dependencies
+# 2. Create conda env and install deps
+conda create -n IA python=3.11 -y
+conda activate IA
 pip install -r requirements.txt
 
-# 3. Run scrapers manually
-python src/scrapers/permits.py       # County permits
-python src/scrapers/zillow.py        # New listings
-python src/scrapers/facebook.py      # FB Groups
+# 3. Configure
+cp .env.example .env
+# Edit .env — fill in SUPABASE_URL, VAPI keys, OPENAI_API_KEY, JWT_SECRET_KEY, INTERNAL_API_KEY
 
-# 4. Run pipeline
-python src/pipeline/runner.py
+# 4. Start API
+uvicorn src.api.main:app --host 0.0.0.0 --port 8001 --reload
 
-# 5. Start API
-uvicorn src/api/main:app --reload
+# 5. Open dashboard
+# Open frontend/index.html in your browser (file:// works)
+
+# 6. Run test suite
+python tools/scripts/test_api.py --base-url http://localhost:8001
 ```
 
 ---
 
-## Lead Sources
+## Production Deployment (Docker + Traefik)
 
-| Source | Type | Volume/week | Quality |
-|---|---|---|---|
-| Hillsborough Building Permits | Public records | 50–200 | ⭐⭐⭐⭐⭐ |
-| Zillow new listings Tampa | New homeowners | 100–300 | ⭐⭐⭐⭐ |
-| Google competitor reviews | Dissatisfied clients | 20–50 | ⭐⭐⭐⭐⭐ |
-| Facebook HOA Groups | High intent posts | 10–30 | ⭐⭐⭐⭐ |
-| Reddit Tampa | Intent signals | 5–15 | ⭐⭐⭐ |
-| SerpAPI local search | Active searchers | 30–80 | ⭐⭐⭐⭐⭐ |
+See `docs/deployment.md` for the full VPS guide.
 
----
-
-## Voicebot — Jimmy
-
-Jimmy is the outbound voice agent powered by **VAPI + ElevenLabs**.  
-Persona: Friendly, professional, local to Tampa.  
-See `tools/prompts/jimmy_v1.md` for the full script.
-
----
-
-## Cost Comparison
-
-| Solution | Monthly Cost | Lead Exclusivity | Volume Control |
-|---|---|---|---|
-| Angie's List | $1,000 | ❌ Shared | ❌ Fixed |
-| This System | ~$150–250 infra | ✅ Exclusive | ✅ Configurable |
-
-Savings: **$750–850/month** after infrastructure costs.
-
----
-
-## Skills (`.claude/skills/`)
-
-- `lead-scraper/SKILL.md` — How to add/extend scrapers
-- `voicebot/SKILL.md` — VAPI configuration and prompt engineering
-- `lead-scoring/SKILL.md` — Scoring model logic
-- `n8n-workflows/SKILL.md` — n8n automation flows
+```bash
+# On the VPS
+git clone https://github.com/zitro677/green-landscape-ai.git /opt/leads-green
+cd /opt/leads-green
+cp .env.example .env && nano .env
+docker compose -f docker-compose.prod.yml up -d
+```
 
 ---
 
 ## Docs
 
-- `docs/architecture.md` — System design decisions
-- `docs/decisions/` — Architecture Decision Records (ADRs)
-- `docs/runbooks/` — Operational playbooks
+| Document | Description |
+|---|---|
+| `docs/architecture.md` | System design, data models, scoring logic |
+| `docs/api.md` | All endpoints with curl examples |
+| `docs/deployment.md` | VPS setup: Docker + Traefik + SSL |
+| `docs/runbooks/operations.md` | Day-to-day ops: restart, logs, scrapers |
+| `docs/decisions/` | Architecture Decision Records |
+
+---
+
+## Cost Comparison
+
+| Solution | Monthly Cost | Exclusivity |
+|---|---|---|
+| Angie's List | $1,000 | ❌ Shared (5–10 competitors) |
+| This System | ~$150–250 | ✅ Exclusive |
+
+**Net saving: ~$750–850/month**
