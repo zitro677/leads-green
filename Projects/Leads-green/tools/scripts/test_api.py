@@ -2,11 +2,11 @@
 test_api.py — Integration tests for the Green Landscape AI Lead Engine API.
 
 Requires a running server:
-    uvicorn src.api.main:app --reload --port 8000
+    uvicorn src.api.main:app --reload --port 8001
 
 Usage:
     python tools/scripts/test_api.py
-    python tools/scripts/test_api.py --base-url http://localhost:8000
+    python tools/scripts/test_api.py --base-url http://localhost:8001
 """
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ import sys
 
 import httpx
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8001"
+API_KEY = "gl-lead-engine-2026"
+AUTH_HEADERS = {"X-API-Key": API_KEY}
 
 PASS = "[PASS]"
 FAIL = "[FAIL]"
@@ -81,7 +83,7 @@ def test_score_high():
         "email": "test@example.com",
         "property_type": "residential",
     }
-    resp = httpx.post(f"{BASE_URL}/score", json=payload, timeout=10)
+    resp = httpx.post(f"{BASE_URL}/score", json=payload, headers=AUTH_HEADERS, timeout=10)
     assert_status(resp, 200)
     data = resp.json()
     assert_key(data, "score")
@@ -107,7 +109,7 @@ def test_score_low():
         "signal_type": "unknown",
         # No phone, no zip, no useful signals
     }
-    resp = httpx.post(f"{BASE_URL}/score", json=payload, timeout=10)
+    resp = httpx.post(f"{BASE_URL}/score", json=payload, headers=AUTH_HEADERS, timeout=10)
     assert_status(resp, 200)
     data = resp.json()
     assert_key(data, "score")
@@ -121,7 +123,7 @@ def test_score_low():
 
 def test_leads_list():
     """GET /leads?status=new should return a paginated list."""
-    resp = httpx.get(f"{BASE_URL}/leads", params={"status": "new"}, timeout=10)
+    resp = httpx.get(f"{BASE_URL}/leads", params={"status": "new"}, headers=AUTH_HEADERS, timeout=10)
     assert_status(resp, 200)
     data = resp.json()
     assert_key(data, "leads")
@@ -139,6 +141,7 @@ def test_leads_list_queued():
     resp = httpx.get(
         f"{BASE_URL}/leads",
         params={"status": "queued", "limit": 10},
+        headers=AUTH_HEADERS,
         timeout=10,
     )
     assert_status(resp, 200)
@@ -165,7 +168,7 @@ def test_ingest_valid():
             }
         ]
     }
-    resp = httpx.post(f"{BASE_URL}/ingest", json=payload, timeout=30)
+    resp = httpx.post(f"{BASE_URL}/ingest", json=payload, headers=AUTH_HEADERS, timeout=30)
     assert_status(resp, 200)
     data = resp.json()
     for key in ("total", "inserted", "duplicates", "discarded", "queued_for_call",
@@ -182,7 +185,7 @@ def test_ingest_valid():
 
 def test_ingest_empty():
     """POST /ingest with empty list should return HTTP 400."""
-    resp = httpx.post(f"{BASE_URL}/ingest", json={"leads": []}, timeout=10)
+    resp = httpx.post(f"{BASE_URL}/ingest", json={"leads": []}, headers=AUTH_HEADERS, timeout=10)
     assert_status(resp, 400)
 
 
@@ -218,6 +221,54 @@ def test_vapi_webhook_end_of_call():
         raise AssertionError(f"Expected status='accepted', got '{data['status']}'")
 
 
+def test_leads_booked():
+    """GET /leads?status=booked — appointment fields must be present in schema."""
+    resp = httpx.get(
+        f"{BASE_URL}/leads",
+        params={"status": "booked", "limit": 5},
+        headers=AUTH_HEADERS,
+        timeout=10,
+    )
+    assert_status(resp, 200)
+    data = resp.json()
+    assert_key(data, "leads")
+    assert_key(data, "count")
+    for lead in data["leads"]:
+        if "appointment_at" not in lead and "id" in lead:
+            raise AssertionError(
+                "appointment_at field missing from booked lead — run migration 004"
+            )
+
+
+def test_auth_login():
+    """POST /auth/login — returns JWT access token."""
+    payload = {"username": "admin", "password": "changeme123"}
+    resp = httpx.post(f"{BASE_URL}/auth/login", json=payload, timeout=10)
+    if resp.status_code not in (200, 401):
+        raise AssertionError(
+            f"Expected 200 or 401 from /auth/login, got {resp.status_code}. Body: {resp.text[:200]}"
+        )
+    if resp.status_code == 200:
+        data = resp.json()
+        assert_key(data, "access_token")
+        assert_key(data, "token_type")
+        assert_key(data, "role")
+
+
+def test_retry_queued():
+    """POST /leads/retry-queued — should start background retry run."""
+    resp = httpx.post(
+        f"{BASE_URL}/leads/retry-queued",
+        headers=AUTH_HEADERS,
+        timeout=10,
+    )
+    assert_status(resp, 200)
+    data = resp.json()
+    assert_key(data, "status")
+    if data["status"] != "started":
+        raise AssertionError(f"Expected status='started', got '{data['status']}'")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -229,7 +280,7 @@ def main():
     parser.add_argument(
         "--base-url",
         default=BASE_URL,
-        help="Server base URL (default: http://localhost:8000)",
+        help="Server base URL (default: http://localhost:8001)",
     )
     args = parser.parse_args()
     BASE_URL = args.base_url.rstrip("/")
@@ -244,7 +295,7 @@ def main():
         print(f"ERROR: Cannot reach server at {BASE_URL}")
         print(f"       {type(exc).__name__}: {exc}")
         print(f"\nStart the server first:")
-        print(f"  uvicorn src.api.main:app --reload --port 8000\n")
+        print(f"  uvicorn src.api.main:app --reload --port 8001\n")
         sys.exit(1)
 
     # Run all tests
@@ -258,6 +309,9 @@ def main():
     run("POST /ingest — empty list (expect 400)", test_ingest_empty)
     run("POST /vapi/outcome — non-end-of-call event (expect ignored)", test_vapi_webhook_ignored)
     run("POST /vapi/outcome — end-of-call-report (expect accepted)", test_vapi_webhook_end_of_call)
+    run("GET  /leads?status=booked — appointment fields present", test_leads_booked)
+    run("POST /auth/login — JWT token returned", test_auth_login)
+    run("POST /leads/retry-queued — background retry started", test_retry_queued)
 
     # Summary
     total = len(results)
