@@ -14,9 +14,10 @@ services:
     environment:
       - APP_ENV=production
       - LOG_LEVEL=info
+      - ALLOWED_ORIGINS=https://leadsgreen.arkanatech.tech,https://api.arkanatech.tech
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.leads-api.rule=Host(`api.arkanatech.net`)"
+      - "traefik.http.routers.leads-api.rule=Host(`api.arkanatech.tech`)"
       - "traefik.http.routers.leads-api.entrypoints=websecure"
       - "traefik.http.routers.leads-api.tls.certresolver=leresolver"
       - "traefik.http.services.leads-api.loadbalancer.server.port=8001"
@@ -36,10 +37,10 @@ services:
     container_name: leads-dashboard
     restart: unless-stopped
     environment:
-      - API_BASE=https://api.arkanatech.net
+      - API_BASE=https://api.arkanatech.tech
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.leads-dashboard.rule=Host(`leads.arkanatech.net`)"
+      - "traefik.http.routers.leads-dashboard.rule=Host(`leadsgreen.arkanatech.tech`)"
       - "traefik.http.routers.leads-dashboard.entrypoints=websecure"
       - "traefik.http.routers.leads-dashboard.tls.certresolver=leresolver"
       - "traefik.http.services.leads-dashboard.loadbalancer.server.port=80"
